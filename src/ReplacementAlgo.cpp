@@ -7,7 +7,7 @@ void ReplacementAlgo::SetWays(uint8_t num_ways) {
 }
 
 uint8_t ReplacementAlgo::GetVictim() const {
-    // Choose a random victim based
-    // on the number of ways
+    // Choose a random victim based on the number of ways
+    // The result can only be 0 -> 3, so way 0 -> way 3
     return rand() % ways;
 }

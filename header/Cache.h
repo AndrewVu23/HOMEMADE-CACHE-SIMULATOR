@@ -50,5 +50,11 @@ class CacheSet {
 };
 
 class Cache {
-
+    private:
+        std::array<CacheSet, CACHE_SETS> sets;                   // Array of cache sets
+        MainMem* MainMem;                                        // Pointer to main mem in case of cache miss   
+    public:
+        void Initialize(MainMem* memory);
+        uint32_t Read(uint32_t address);                         // Return address to CPU
+        void Write(uint32_t address, uint32_t data);             // Doesn't need to return address to CPU
 };
