@@ -15,8 +15,8 @@ class MainMem {
         // delete memory when obj MainMem is destroyed
         std::unique_ptr<std::array<uint8_t, MAIN_MEMORY_SIZE>> memory;
     public:
-        MainMem(); // Constructor = initialize + setup obj
-        ~MainMem(); // Deconstructor = cleans up + free obj
+        MainMem();    // Constructor = initialize + setup obj
+        ~MainMem();   // Deconstructor = cleans up + free obj
 
         // address = 32-bit indexing
         // size = 1 byte
