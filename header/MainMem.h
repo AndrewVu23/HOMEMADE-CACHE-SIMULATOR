@@ -1,9 +1,11 @@
 #pragma once
 
 #include <memory>
+#include <array>
+#include <cstdint>
 
 // Initialize a 4MB 32-bit main memory
-const uint32_t MAIN_MEMORY_SIZE = 4 * 1024 * 1024
+const uint32_t MAIN_MEMORY_SIZE = 4 * 1024 * 1024;
 
 class MainMem {
     private:

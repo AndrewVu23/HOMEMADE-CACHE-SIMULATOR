@@ -3,6 +3,7 @@
 #include <iostream>
 #include <format>
 #include <string>
+#include <cstring>
 
 MainMem::MainMem() {
 
@@ -18,16 +19,22 @@ MainMem::~MainMem() {
 }
 
 void MainMem::Read(uint32_t start_addr, uint8_t size, uint8_t* des_ptr) {
+    std::string message = std::format("Reading from main memory (address: 0x{:x})", start_addr);
+    std::cout << message << std::endl;
     // Read & copy data from mem
     std::memcpy(des_ptr, &memory.get()->at(start_addr), size);
 }
 
 void MainMem::Write(uint32_t start_addr, uint8_t size, uint8_t* src_ptr) {
+    std::string message = std::format("Writing to main memory (address: 0x{:x})", start_addr);
+    std::cout << message << std::endl;
     // Copy data from source to mem
     std::memcpy(&memory.get()->at(start_addr), src_ptr, size);
 }
 
 void MainMem::Print() {
+    // 24 x 12 = 288 bytes -> mapping 2D array onto the first 288 bytes of the 
+    // 4MB 1D array for debugging (mapping the whole 4MB = impossible)
     const uint32_t ROWS = 24;
     const uint32_t COLUMNS = 12;
 
@@ -45,5 +52,5 @@ void MainMem::Print() {
     for (uint32_t line = 0; line < 80; line++) {
         std::cout << "-";
     }
-    std::cout << endl;
+    std::cout << std::endl;
 }

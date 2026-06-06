@@ -1,11 +1,11 @@
 #pragma once
 
-#include <cstint>
+#include <cstdint>
 
 class Random {
     private:
         // Number of ways
-        uint8_t ways = 0
+        uint8_t ways = 0;
     public:
         // Passing num_ways -> ways = reusability + flexibility
         // (no hardcoded)

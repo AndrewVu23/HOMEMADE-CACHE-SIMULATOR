@@ -1,4 +1,8 @@
 #include "Cache.h"
+#include <iostream>
+#include <format>
+#include <string>
+#include <cstring>
 
 CacheSet::CacheSet() {
     // Set number of ways in the replacement algo
@@ -37,11 +41,11 @@ CacheLine* CacheSet::Replace(uint32_t tag, uint8_t* src_data) {
 }
 
 void Cache::Initialize(MainMem* memory) {
-    MainMem = memory;                                     // Initialize the memory pointer (saving the address)     
+    mainMem = memory;                                     // Initialize the memory pointer (saving the address)     
 }
 
-void Cache::Read(uint32_t address) {
-    AddressParts AddressParts(address);
+uint32_t Cache::Read(uint32_t address) {
+    AddressParts addressParts(address);
 
     // Find the requested cache line
     // Keep in mind that set is an array containing CacheSet as the data,
@@ -49,36 +53,42 @@ void Cache::Read(uint32_t address) {
     // Right above, we can see the Find() method iterates through each way to compare
     // the tags & valid bits, and as mentioned before, we choose a set from the set array
     // then check the cache line, which is what happens here
-    CacheLine* line = sets[AddressParts.setIndex].Find(AddressParts.tag);
+    CacheLine* line = sets[addressParts.setIndex].Find(addressParts.tag);
 
     // Cache hit
     if (line) {
+        std::string message = std::format("Reading from cache (address: 0x{:x}), set: {}, tag: {})", 
+            address, addressParts.setIndex, addressParts.tag);
+        std::cout << message << std::endl;
         // While the CPU can request various byte size, we are using 32 bits here for simplicity
         // Remember that data is stored as 1-byte chunk in an array, so to read 32 bits,
         // we need to use pointer reinterpretation.
-        // &line->data[AddressParts.byteOffset] = line goes to data and grab the starting memory address using byteOffset
+        // &line->data[addressParts.byteOffset] = line goes to data and grab the starting memory address using byteOffset
         // *reinterpret_cast<uint32_t*> forces the compiler to look at a 4-byte chunk instead of just the starting-address chunk.
         // Then we dereference the pointer to get the 4-byte value, starting from the starting-address chunk.
-        return *reinterpret_cast<uint32_t*>(&line->data[AddressParts.byteOffset]);
+        return *reinterpret_cast<uint32_t*>(&line->data[addressParts.byteOffset]);
     }
     else {
-        uint32_t line_start = address & ~(CACHE_LINE_SIZE - 1)                                      // Clear the 6 LSBs since each cache line is 64 bytes apart
+        uint32_t line_start = address & ~(CACHE_LINE_SIZE - 1);                                     // Clear the 6 LSBs since each cache line is 64 bytes apart
         std::array<uint8_t, CACHE_LINE_SIZE> buffer;                                                // Create a buffer to whole the entire cache line
-        MainMem->Read(line_start, CACHE_LINE_SIZE, buffer.data());                                  // Read the requested data in main mem
-        CacheLine new_line = set[AddressParts.setIndex].Replace(AddressParts.tag, buffer.data());   // Replace the cache line in the set
-        return *reinterpret_cast<uint32_t*>(&new_line->data[AddressParts.byteOffset]);
+        mainMem->Read(line_start, CACHE_LINE_SIZE, buffer.data());                                  // Read the requested data in main mem
+        CacheLine* new_line = sets[addressParts.setIndex].Replace(addressParts.tag, buffer.data()); // Replace the cache line in the set
+        return *reinterpret_cast<uint32_t*>(&new_line->data[addressParts.byteOffset]);
     }
 }
  
 void Cache::Write(uint32_t address, uint32_t data) {
-    AddressParts AddressParts(address);
+    AddressParts addressParts(address);
 
-    CacheLine* line = sets[AddressParts.setIndex].Find(AddressParts.tag);
+    CacheLine* line = sets[addressParts.setIndex].Find(addressParts.tag);
     
     // We are using write-through & no-write-allocate policies
     if (line) {
+        std::string message = std::format("Writing to cache (address: 0x{:x}), set: {}, tag: {})", 
+            address, addressParts.setIndex, addressParts.tag);
+        std::cout << message << std::endl;
         // Reinterpret the cache memory as a 32-bit integer
-        *reinterpret_cast<uint32_t*>(&line->data[AddressParts.byteOffset]) = data;
+        *reinterpret_cast<uint32_t*>(&line->data[addressParts.byteOffset]) = data;
     }
     // Write-through & no-write-allocate policies
     // The CPU will write straight to main mem regardless of a hit/miss
@@ -87,5 +97,5 @@ void Cache::Write(uint32_t address, uint32_t data) {
     // size as sizeof(uint32_t).
     // reinterpret_cast<uint8_t*>(&data) will chops off 1 byte each time in this loop
     // to fit the 1-byte slot in main mem
-    MainMem->Write(address, sizeof(uint32_t), reinterpret_cast<uint8_t*>(&data));
+    mainMem->Write(address, sizeof(uint32_t), reinterpret_cast<uint8_t*>(&data));
 }
