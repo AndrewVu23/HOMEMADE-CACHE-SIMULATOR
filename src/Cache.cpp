@@ -62,10 +62,30 @@ void Cache::Read(uint32_t address) {
         return *reinterpret_cast<uint32_t*>(&line->data[AddressParts.byteOffset]);
     }
     else {
-
+        uint32_t line_start = address & ~(CACHE_LINE_SIZE - 1)                                      // Clear the 6 LSBs since each cache line is 64 bytes apart
+        std::array<uint8_t, CACHE_LINE_SIZE> buffer;                                                // Create a buffer to whole the entire cache line
+        MainMem->Read(line_start, CACHE_LINE_SIZE, buffer.data());                                  // Read the requested data in main mem
+        CacheLine new_line = set[AddressParts.setIndex].Replace(AddressParts.tag, buffer.data());   // Replace the cache line in the set
+        return *reinterpret_cast<uint32_t*>(&new_line->data[AddressParts.byteOffset]);
     }
 }
-
+ 
 void Cache::Write(uint32_t address, uint32_t data) {
+    AddressParts AddressParts(address);
 
+    CacheLine* line = sets[AddressParts.setIndex].Find(AddressParts.tag);
+    
+    // We are using write-through & no-write-allocate policies
+    if (line) {
+        // Reinterpret the cache memory as a 32-bit integer
+        *reinterpret_cast<uint32_t*>(&line->data[AddressParts.byteOffset]) = data;
+    }
+    // Write-through & no-write-allocate policies
+    // The CPU will write straight to main mem regardless of a hit/miss
+    // The std::memcpy in the Write() method runs an implicit loop where it will
+    // read the 1-byte data 4 times until it reaches 32 bits since we declared the
+    // size as sizeof(uint32_t).
+    // reinterpret_cast<uint8_t*>(&data) will chops off 1 byte each time in this loop
+    // to fit the 1-byte slot in main mem
+    MainMem->Write(address, sizeof(uint32_t), reinterpret_cast<uint8_t*>(&data));
 }
