@@ -57,7 +57,7 @@ uint32_t Cache::Read(uint32_t address) {
 
     // Cache hit
     if (line) {
-        std::string message = std::format("Reading from cache (address: 0x{:x}), set: {}, tag: {})", 
+        std::string message = std::format("Reading from cache (start address: 0x{:x}), set: {}, tag: {})", 
             address, addressParts.setIndex, addressParts.tag);
         std::cout << message << std::endl;
         // While the CPU can request various byte size, we are using 32 bits here for simplicity
@@ -84,7 +84,7 @@ void Cache::Write(uint32_t address, uint32_t data) {
     
     // We are using write-through & no-write-allocate policies
     if (line) {
-        std::string message = std::format("Writing to cache (address: 0x{:x}), set: {}, tag: {})", 
+        std::string message = std::format("Writing to cache (start address: 0x{:x}), set: {}, tag: {})", 
             address, addressParts.setIndex, addressParts.tag);
         std::cout << message << std::endl;
         // Reinterpret the cache memory as a 32-bit integer
