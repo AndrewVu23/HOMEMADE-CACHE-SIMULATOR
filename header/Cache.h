@@ -2,59 +2,82 @@
 
 #include "MainMem.h"
 #include "ReplacementAlgo.h"
-#include <array>
+#include <vector>
+#include <cstdint>
 
-const uint8_t MEMORY_ADDRESS_SIZE = 32;                         // 32-bit memory addresses
-const uint8_t CACHE_LINE_SIZE = 64;                             // 64-byte cache lines
-const uint8_t CACHE_SETS = 64;                                  // 64 sets
-const uint8_t CACHE_WAYS = 4;                                   // 4-way set-associative cache
+// User-facing cache specs. Fill this in Processor.cpp->main() and the
+// cache builds itself
+struct CacheConfig {
+    uint32_t numSets;                                           // #Sets (power of two)
+    uint32_t numWays;                                           // #Ways (>= 1)
+    uint32_t lineSize;                                          // Cache line size in bytes (power of two)
+    uint32_t addressBits = 32;                                  // Address width in bits
+    bool writeBack = false;                                     // false = write-through, true = write-back
+    ReplacementPolicy policy = ReplacementPolicy::Random;       // Replacement Policy
 
-const uint8_t CACHE_LINE_BYTE_OFFSET_SIZE = 6;                  // 64 bytes -> 6-bit indexing 
-const uint8_t CACHE_LINE_SET_INDEX_SIZE = 6;                    // 64 sets -> 6-bit indexing
-const uint8_t CACHE_LINE_TAG_SIZE = 20;                         // Remaining bits
-
-// Cache Line = [tag][data][valid] = [20 bits][64 bytes][1 bit]
-struct CacheLine {
-    uint32_t tag = 0;
-    std::array<uint8_t, CACHE_LINE_SIZE> data;
-    bool valid = false;
+    // Method to check if the user follow the specs:
+    // Powers of two required for clean bit-field address decoding &
+    // associativity only needs to be >= 1. Returns false on bad specs.
+    bool Validate() const;
 };
 
-// Address decoding = [tag][setIndex][byteOffset] = [20 bits][6 bits][6 bits] = 32-bit address
+// Cache Line = [tag][data][valid][dirty]
+struct CacheLine {
+    uint32_t tag = 0;
+    std::vector<uint8_t> data;                      // Sized to lineSize at init
+    bool valid = false;
+    bool dirty = false;                             // Used by write-back to flag pending flush
+};
+
+// Address decoding = [tag][setIndex][byteOffset]
+// Bit widths are derived from the config at runtime instead of being fixed
 struct AddressParts {
     uint32_t tag;
-    uint8_t setIndex;
+    uint32_t setIndex;
     uint32_t byteOffset;
-    
-    // Decoding stage
-    AddressParts(uint32_t address) {
-        byteOffset = address & (CACHE_LINE_SIZE - 1);            // 63 = 8'b00111111 = lower 6-bit mask
-        setIndex = (address >> CACHE_LINE_BYTE_OFFSET_SIZE)      // Remove the byte-offset bits
-            & ((1 << CACHE_LINE_SET_INDEX_SIZE) - 1);            // 8'b01000000 = 64. 64 - 1 = lower 6-bit mask again
-        tag = address >> (CACHE_LINE_BYTE_OFFSET_SIZE            // Keep the remaining bits
-            + CACHE_LINE_SET_INDEX_SIZE);
+
+    // Decoding stage using runtime bit widths
+    AddressParts(uint32_t address, uint32_t byteOffsetBits, uint32_t setIndexBits) {
+        byteOffset = address & ((1 << byteOffsetBits) - 1);       // Lower byteOffsetBits mask
+        setIndex = (address >> byteOffsetBits)                    // Remove the byte-offset bits
+            & ((1 << setIndexBits) - 1);                          // Lower setIndexBits mask
+        tag = address >> (byteOffsetBits + setIndexBits);         // Keep the remaining bits
     }
 };
 
 class CacheSet {
-    private: 
-        std::array<CacheLine, CACHE_WAYS> lines;                 // Array of cache lines
-        Random replacement;                                      // Random Replacement Algo
+    private:
+        std::vector<CacheLine> lines;                             // Runtime-sized array of cache lines
+        std::unique_ptr<ReplacementAlgo> replacement;             // Pluggable replacement algo
+        uint32_t ways = 0;
     public:
-        CacheSet();
-        ~CacheSet();
+        // Pass the configs to the config function
+        void Init(const CacheConfig& config);
 
-        CacheLine* Find(uint32_t tag);                           // Return a pointer to that cache line if hit
-        CacheLine* Replace(uint32_t tag, uint8_t* src_data);     // Return a pointer to the cache line which is going
-                                                                 // to be replaced (address of src_data is also passed in)
+        // Return a pointer to that cache line if hit
+        CacheLine* Find(uint32_t tag);                            
+
+        // Return a pointer to the line that was (re)filled. setIndex is needed
+        // so write-back can rebuild a victim's address before flushing it.
+        CacheLine* Replace(uint32_t tag, uint32_t setIndex, uint8_t* src_data,
+            MainMem* mainMem, const CacheConfig& config,
+            uint32_t byteOffsetBits, uint32_t setIndexBits);
+
+        // Notify the replacement algo that a way was accessed 
+        //(for other replacement algos like LRU/FIFO)
+        void Touch(CacheLine* line);
 };
 
 class Cache {
     private:
-        std::array<CacheSet, CACHE_SETS> sets;                   // Array of cache sets
-        MainMem* mainMem;                                        // Pointer to main mem in case of cache miss   
+        std::vector<CacheSet> sets;                               // Runtime-sized array of cache sets
+        MainMem* mainMem = nullptr;                               // Pointer to main mem in case of cache miss
+        CacheConfig config;                                       // Cache specification
+        uint32_t byteOffsetBits = 0;                              // log2(lineSize)
+        uint32_t setIndexBits = 0;                                // log2(numSets)
     public:
-        void Initialize(MainMem* memory);
-        uint32_t Read(uint32_t address);                         // Return address to CPU
-        void Write(uint32_t address, uint32_t data);             // Doesn't need to return address to CPU
+        // Store config & compute decode bit widths & build the sets
+        void Initialize(const CacheConfig& cfg, MainMem* memory);
+        uint32_t Read(uint32_t address);                          // Return data to CPU
+        void Write(uint32_t address, uint32_t data);              // Doesn't need to return to CPU
 };
