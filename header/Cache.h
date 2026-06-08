@@ -13,6 +13,7 @@ struct CacheConfig {
     uint32_t lineSize;                                          // Cache line size in bytes (power of two)
     uint32_t addressBits = 32;                                  // Address width in bits
     bool writeBack = false;                                     // false = write-through, true = write-back
+    bool writeAllocate = false;                                 // false = no-write-allocate, true = write-allocate
     ReplacementPolicy policy = ReplacementPolicy::Random;       // Replacement Policy
 
     // Method to check if the user follow the specs:

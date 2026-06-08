@@ -30,7 +30,7 @@ void CacheSet::Init(const CacheConfig& config) {
     lines.resize(ways);
 
     // Allocate the ways and size each line's data buffer to the line size
-    ffor (uint32_t i = 0; i < lines.size(); i++) {
+    for (uint32_t i = 0; i < lines.size(); i++) {
         lines[i].data.assign(config.lineSize, 0);
     }
 
