@@ -8,7 +8,7 @@ class MemSys {
         MainMem mainMem;
         Cache cache;
     public:
-        MemSys();
+        MemSys(const CacheConfig& config);
         ~MemSys();
 
         uint32_t Read(uint32_t address);
