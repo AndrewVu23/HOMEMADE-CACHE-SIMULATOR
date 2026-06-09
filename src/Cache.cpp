@@ -1,9 +1,41 @@
 #include "Cache.h"
 #include <iostream>
+#include <ostream>
 #include <format>
 #include <string>
 #include <cstring>
 #include <bit>
+
+// --------------------------- CacheStats ---------------------------
+
+double CacheStats::hitRate() const {
+    uint64_t total = accesses();
+    return (total == 0) ? 0.0 : static_cast<double>(hits()) / static_cast<double>(total);
+}
+
+double CacheStats::missRate() const {
+    uint64_t total = accesses();
+    return (total == 0) ? 0.0 : static_cast<double>(misses()) / static_cast<double>(total);
+}
+
+double CacheStats::amat(uint32_t hitTime, uint32_t missPenalty) const {
+    // Average Memory Access Time = hit time + miss rate * miss penalty
+    return static_cast<double>(hitTime) + missRate() * static_cast<double>(missPenalty);
+}
+
+void CacheStats::Report(uint32_t hitTime, uint32_t missPenalty) const {
+    std::cout << "==================== Cache Profile ====================" << std::endl;
+    std::cout << std::format("Accesses        : {} (reads: {}, writes: {})", accesses(), reads, writes) << std::endl;
+    std::cout << std::format("Hits            : {} (read: {}, write: {})", hits(), readHits, writeHits) << std::endl;
+    std::cout << std::format("Misses          : {} (read: {}, write: {})", misses(), readMisses, writeMisses) << std::endl;
+    std::cout << std::format("Hit rate        : {:.2f}%", hitRate() * 100.0) << std::endl;
+    std::cout << std::format("Miss rate       : {:.2f}%", missRate() * 100.0) << std::endl;
+    std::cout << std::format("Evictions       : {}", evictions) << std::endl;
+    std::cout << std::format("Dirty writebacks: {}", dirtyWritebacks) << std::endl;
+    std::cout << std::format("AMAT            : {:.2f} cycles (hitTime={}, missPenalty={})",
+        amat(hitTime, missPenalty), hitTime, missPenalty) << std::endl;
+    std::cout << "=======================================================" << std::endl;
+}
 
 // Ensure that the specs follow the guidelines
 bool CacheConfig::Validate() const {
@@ -18,6 +50,12 @@ bool CacheConfig::Validate() const {
     }
     if (lineSize == 0 || !std::has_single_bit(lineSize)) {
         std::cout << "Invalid cache config: lineSize must be a power of two" << std::endl;
+        return false;
+    }
+    // Tree-based PLRU indexes a binary tree of ways, so it only works when the
+    // number of ways is a power of two
+    if (policy == ReplacementPolicy::PLRU && !std::has_single_bit(numWays)) {
+        std::cout << "Invalid cache config: PLRU requires numWays to be a power of two" << std::endl;
         return false;
     }
     return true;
@@ -49,6 +87,16 @@ CacheLine* CacheSet::Find(uint32_t tag) {
     return nullptr;                                       // Cache Miss
 }
 
+bool CacheSet::Contains(uint32_t tag) const {
+    // Same scan as Find() but const and side-effect free (no Touch / stats)
+    for (uint32_t way = 0; way < ways; way++) {
+        if (lines[way].valid && lines[way].tag == tag) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void CacheSet::Touch(CacheLine* line) {
     // Translate the line pointer back into a way index for the replacement algo:
     // lines.data() = pointer to the first element in CacheLine*
@@ -59,12 +107,28 @@ void CacheSet::Touch(CacheLine* line) {
     replacement->Touch(way);
 }
 
+void CacheSet::Dump(uint32_t setIndex, std::ostream& os) const {
+    for (uint32_t way = 0; way < ways; way++) {
+        const CacheLine& line = lines[way];
+        if (!line.valid) {
+            continue;                                    // Skip empty ways to keep the dump readable
+        }
+        os << std::format("  set {:>4} | way {:>2} | valid={} dirty={} tag=0x{:x}",
+            setIndex, way, line.valid ? 1 : 0, line.dirty ? 1 : 0, line.tag) << std::endl;
+    }
+}
+
 CacheLine* CacheSet::Replace(uint32_t tag, uint32_t setIndex, uint8_t* src_data,
     MainMem* mainMem, const CacheConfig& config,
-    uint32_t byteOffsetBits, uint32_t setIndexBits) {
+    uint32_t byteOffsetBits, uint32_t setIndexBits, CacheStats& stats) {
     // Choosing a victim line
     uint8_t victim = replacement->GetVictim();
     CacheLine& line = lines[victim];
+
+    // Overwriting a valid line counts as an eviction
+    if (line.valid) {
+        stats.evictions++;
+    }
 
     // Write-back: a valid + dirty victim must be flushed to main mem before
     // we overwrite it, otherwise its modified bytes would be lost
@@ -73,8 +137,11 @@ CacheLine* CacheSet::Replace(uint32_t tag, uint32_t setIndex, uint8_t* src_data,
         uint32_t victim_addr = (line.tag << (byteOffsetBits + setIndexBits))        // Pusing the tag bits back to its orignal position (past byte + set index)
             | (setIndex << byteOffsetBits);                                         // Pushing the set bits + combine both fields into the orignal address
                                                                                     // byteOffset bits = 0 since we want the base starting address (flushing the entire cache line)
-        std::string message = std::format("Flushing dirty line to main memory (start address: 0x{:x})", victim_addr);
-        std::cout << message << std::endl;
+        stats.dirtyWritebacks++;
+        if (config.verbose) {
+            std::string message = std::format("Flushing dirty line to main memory (start address: 0x{:x})", victim_addr);
+            std::cout << message << std::endl;
+        }
         mainMem->Write(victim_addr, static_cast<uint8_t>(config.lineSize), line.data.data());
     }
 
@@ -86,8 +153,10 @@ CacheLine* CacheSet::Replace(uint32_t tag, uint32_t setIndex, uint8_t* src_data,
     // Copy the line-sized data from main mem into the cache line
     std::memcpy(line.data.data(), src_data, config.lineSize);
 
-    // Notify the replacement algo that this way was just (re)filled
-    replacement->Touch(victim);
+    // Notify the replacement algo that this way was just (re)filled.
+    // Insert() (not Touch()) so FIFO records insertion order while ignoring
+    // later accesses; recency algos (LRU/PLRU) treat the fill as an access.
+    replacement->Insert(victim);
 
     return &line;
 }
@@ -95,6 +164,8 @@ CacheLine* CacheSet::Replace(uint32_t tag, uint32_t setIndex, uint8_t* src_data,
 void Cache::Initialize(const CacheConfig& cfg, MainMem* memory) {
     config = cfg;
     mainMem = memory;                                     // Initialize the memory pointer (saving the address)
+    mainMem->SetVerbose(config.verbose);                  // Propagate logging preference to main mem
+    stats = CacheStats{};                                 // Fresh counters for this configuration
 
     // Derive the decode bit widths from the sizes using log2
     // log2 accelerator: counting trailing zeroes -> equivalent log2(size)
@@ -110,39 +181,48 @@ void Cache::Initialize(const CacheConfig& cfg, MainMem* memory) {
 
 uint32_t Cache::Read(uint32_t address) {
     AddressParts addressParts(address, byteOffsetBits, setIndexBits);
+    stats.reads++;
 
     // Find the requested cache line in the chosen set
     CacheLine* line = sets[addressParts.setIndex].Find(addressParts.tag);
 
     // Cache hit
     if (line) {
-        std::string message = std::format("Reading from cache (start address: 0x{:x}), set: {}, tag: {})",
-            address, addressParts.setIndex, addressParts.tag);
-        std::cout << message << std::endl;
+        stats.readHits++;
+        if (config.verbose) {
+            std::string message = std::format("Reading from cache (start address: 0x{:x}), set: {}, tag: {})",
+                address, addressParts.setIndex, addressParts.tag);
+            std::cout << message << std::endl;
+        }
         sets[addressParts.setIndex].Touch(line);
         // While the CPU can request various byte size, we are using 32 bits here for simplicity
         return *reinterpret_cast<uint32_t*>(&line->data[addressParts.byteOffset]);
     }
     else {
+        stats.readMisses++;
         uint32_t line_start = address & ~(config.lineSize - 1);                          // Clear the byte-offset bits to land on the line start
         std::vector<uint8_t> buffer(config.lineSize);                                    // Buffer to hold the entire cache line
         mainMem->Read(line_start, static_cast<uint8_t>(config.lineSize), buffer.data()); // Read the requested data in main mem
         CacheLine* new_line = sets[addressParts.setIndex].Replace(addressParts.tag,      // Fill the cache line in the set
-            addressParts.setIndex, buffer.data(), mainMem, config, byteOffsetBits, setIndexBits);
+            addressParts.setIndex, buffer.data(), mainMem, config, byteOffsetBits, setIndexBits, stats);
         return *reinterpret_cast<uint32_t*>(&new_line->data[addressParts.byteOffset]);
     }
 }
 
 void Cache::Write(uint32_t address, uint32_t data) {
     AddressParts addressParts(address, byteOffsetBits, setIndexBits);
+    stats.writes++;
 
     CacheLine* line = sets[addressParts.setIndex].Find(addressParts.tag);
 
     // Write hit
     if (line) {
-        std::string message = std::format("Writing to cache (start address: 0x{:x}), set: {}, tag: {})",
-            address, addressParts.setIndex, addressParts.tag);
-        std::cout << message << std::endl;
+        stats.writeHits++;
+        if (config.verbose) {
+            std::string message = std::format("Writing to cache (start address: 0x{:x}), set: {}, tag: {})",
+                address, addressParts.setIndex, addressParts.tag);
+            std::cout << message << std::endl;
+        }
         // Reinterpret the cache memory as a 32-bit integer and store
         *reinterpret_cast<uint32_t*>(&line->data[addressParts.byteOffset]) = data;
         sets[addressParts.setIndex].Touch(line);
@@ -159,13 +239,14 @@ void Cache::Write(uint32_t address, uint32_t data) {
     }
 
     // Write miss
+    stats.writeMisses++;
     if (config.writeAllocate) {
         // Write-allocate: pull the line into the cache, then apply the write
         uint32_t line_start = address & ~(config.lineSize - 1);
         std::vector<uint8_t> buffer(config.lineSize);
         mainMem->Read(line_start, static_cast<uint8_t>(config.lineSize), buffer.data());
         CacheLine* new_line = sets[addressParts.setIndex].Replace(addressParts.tag,
-            addressParts.setIndex, buffer.data(), mainMem, config, byteOffsetBits, setIndexBits);
+            addressParts.setIndex, buffer.data(), mainMem, config, byteOffsetBits, setIndexBits, stats);
 
         *reinterpret_cast<uint32_t*>(&new_line->data[addressParts.byteOffset]) = data;
         sets[addressParts.setIndex].Touch(new_line);
@@ -181,4 +262,21 @@ void Cache::Write(uint32_t address, uint32_t data) {
 
     // No-write-allocate: write straight to main mem, don't load into cache
     mainMem->Write(address, sizeof(uint32_t), reinterpret_cast<uint8_t*>(&data));
+}
+
+bool Cache::Contains(uint32_t address) const {
+    AddressParts addressParts(address, byteOffsetBits, setIndexBits);
+    return sets[addressParts.setIndex].Contains(addressParts.tag);
+}
+
+void Cache::Dump(std::ostream& os) const {
+    os << "------------------------ Cache Contents ------------------------" << std::endl;
+    for (uint32_t i = 0; i < sets.size(); i++) {
+        sets[i].Dump(i, os);                             // Each set prints only its valid ways
+    }
+    os << "----------------------------------------------------------------" << std::endl;
+}
+
+void Cache::PrintStats() const {
+    stats.Report(config.hitTime, config.missPenalty);
 }

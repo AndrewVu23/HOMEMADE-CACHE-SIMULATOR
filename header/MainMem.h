@@ -17,6 +17,7 @@ class MainMem {
         // -> cannot be accidentally copied or shared + automatically
         // delete memory when obj MainMem is destroyed
         std::unique_ptr<std::array<uint8_t, MAIN_MEMORY_SIZE>> memory;
+        bool verbose = true;                                                // Gate per-access cout logging
     public:
         MainMem();                                                          // Constructor = initialize + setup obj
         ~MainMem();                                                         // Deconstructor = cleans up + free obj
@@ -28,5 +29,7 @@ class MainMem {
         void Read(uint32_t start_addr, uint8_t size, uint8_t* des_ptr);     // Read from main mem
         void Write(uint32_t start_addr, uint8_t size, uint8_t* src_ptr);    // Write to main mem
         void Load(const std::string& path);                                 // Load a binary file into main mem starting at address 0
+        void FillPattern();                                                 // Seed each byte with (address & 0xFF) - file-free test data
+        void SetVerbose(bool on) { verbose = on; }                          // Toggle access logging
         void Print();                                                       // For debugging
 };

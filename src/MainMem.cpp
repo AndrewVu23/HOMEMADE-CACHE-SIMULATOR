@@ -20,17 +20,30 @@ MainMem::~MainMem() {
 }
 
 void MainMem::Read(uint32_t start_addr, uint8_t size, uint8_t* des_ptr) {
-    std::string message = std::format("Reading from main memory (start address: 0x{:x})", start_addr);
-    std::cout << message << std::endl;
+    if (verbose) {
+        std::string message = std::format("Reading from main memory (start address: 0x{:x})", start_addr);
+        std::cout << message << std::endl;
+    }
     // Read & copy data from mem
     std::memcpy(des_ptr, &memory.get()->at(start_addr), size);
 }
 
 void MainMem::Write(uint32_t start_addr, uint8_t size, uint8_t* src_ptr) {
-    std::string message = std::format("Writing to main memory (start address: 0x{:x})", start_addr);
-    std::cout << message << std::endl;
+    if (verbose) {
+        std::string message = std::format("Writing to main memory (start address: 0x{:x})", start_addr);
+        std::cout << message << std::endl;
+    }
     // Copy data from source to mem
     std::memcpy(&memory.get()->at(start_addr), src_ptr, size);
+}
+
+void MainMem::FillPattern() {
+    // Seed each byte with the low 8 bits of its address (value == address & 0xFF),
+    // the same convention as data.bin. Gives tests predictable read values with no file
+    std::array<uint8_t, MAIN_MEMORY_SIZE>& mem = *memory.get();
+    for (uint32_t i = 0; i < MAIN_MEMORY_SIZE; i++) {
+        mem[i] = static_cast<uint8_t>(i & 0xFF);
+    }
 }
 
 void MainMem::Load(const std::string& path) {
