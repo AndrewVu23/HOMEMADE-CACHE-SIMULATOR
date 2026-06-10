@@ -1,3 +1,5 @@
 *.o
 cache_sim
 data.bin
+documentation.md
+cache_tests
