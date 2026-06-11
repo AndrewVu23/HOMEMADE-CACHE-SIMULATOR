@@ -28,6 +28,9 @@ void CacheStats::Report(uint32_t hitTime, uint32_t missPenalty) const {
     std::cout << std::format("Accesses        : {} (reads: {}, writes: {})", accesses(), reads, writes) << std::endl;
     std::cout << std::format("Hits            : {} (read: {}, write: {})", hits(), readHits, writeHits) << std::endl;
     std::cout << std::format("Misses          : {} (read: {}, write: {})", misses(), readMisses, writeMisses) << std::endl;
+    std::cout << std::format("  compulsory    : {}", compulsoryMisses) << std::endl;
+    std::cout << std::format("  capacity      : {}", capacityMisses) << std::endl;
+    std::cout << std::format("  conflict      : {}", conflictMisses) << std::endl;
     std::cout << std::format("Hit rate        : {:.2f}%", hitRate() * 100.0) << std::endl;
     std::cout << std::format("Miss rate       : {:.2f}%", missRate() * 100.0) << std::endl;
     std::cout << std::format("Evictions       : {}", evictions) << std::endl;
@@ -177,11 +180,53 @@ void Cache::Initialize(const CacheConfig& cfg, MainMem* memory) {
     for (CacheSet& set : sets) {
         set.Init(config);
     }
+
+    // Reset the shadow cache models
+    seenBlocks.clear();
+    shadowOrder.clear();
+    shadowIndex.clear();
+    shadowCapacity = static_cast<size_t>(config.numSets) * config.numWays;
+}
+
+// Shadow cache model running in parallel
+void Cache::Account(uint32_t blockAddr, bool isMiss, bool installs) {
+    if (isMiss) {
+        if (seenBlocks.find(blockAddr) == seenBlocks.end()) {
+            stats.compulsoryMisses++;                    // Never seen this block before -> cold miss
+        }
+        else if (shadowIndex.find(blockAddr) == shadowIndex.end()) {
+            stats.capacityMisses++;                      // A same-size fully-assoc cache would miss too -> capacity
+        }
+        else {
+            stats.conflictMisses++;                      // Fully-assoc still holds it -> conflicts
+        }
+    }
+    seenBlocks.insert(blockAddr);
+
+    // Advance the fully-associative LRU shadow. A block already present is moved
+    // to MRU (a hit, regardless of installs); an absent block is filled only when
+    // the real cache would install it, evicting the shadow's LRU block if full
+    auto it = shadowIndex.find(blockAddr);
+    if (it != shadowIndex.end()) {                      // Cache hit (since C++ maps return .end() if .find() fails)
+        shadowOrder.erase(it->second);                  // First = Key (or uint32_t blockAddr); Second = Value (list::iterator)
+        shadowOrder.push_front(blockAddr);              // MRU
+        it->second = shadowOrder.begin();               // list::iterator now points to the MRU block
+    }
+    else if (installs && shadowCapacity > 0) {          
+        shadowOrder.push_front(blockAddr);              // MRU
+        shadowIndex[blockAddr] = shadowOrder.begin();   // Create a link pointing to the new MRU block
+        if (shadowIndex.size() > shadowCapacity) {      // Shadow cache overflowing -> eviction
+            uint32_t lru = shadowOrder.back();          // LRU policy
+            shadowOrder.pop_back();                     // Cut the victim off from the list
+            shadowIndex.erase(lru);                     // Erase the victim from the map
+        }
+    }
 }
 
 uint32_t Cache::Read(uint32_t address) {
     AddressParts addressParts(address, byteOffsetBits, setIndexBits);
     stats.reads++;
+    uint32_t blockAddr = address >> byteOffsetBits;
 
     // Find the requested cache line in the chosen set
     CacheLine* line = sets[addressParts.setIndex].Find(addressParts.tag);
@@ -189,6 +234,7 @@ uint32_t Cache::Read(uint32_t address) {
     // Cache hit
     if (line) {
         stats.readHits++;
+        Account(blockAddr, /*isMiss=*/false, /*installs=*/true);
         if (config.verbose) {
             std::string message = std::format("Reading from cache (start address: 0x{:x}), set: {}, tag: {})",
                 address, addressParts.setIndex, addressParts.tag);
@@ -200,6 +246,7 @@ uint32_t Cache::Read(uint32_t address) {
     }
     else {
         stats.readMisses++;
+        Account(blockAddr, /*isMiss=*/true, /*installs=*/true);                           // A read always fills the line
         uint32_t line_start = address & ~(config.lineSize - 1);                          // Clear the byte-offset bits to land on the line start
         std::vector<uint8_t> buffer(config.lineSize);                                    // Buffer to hold the entire cache line
         mainMem->Read(line_start, static_cast<uint8_t>(config.lineSize), buffer.data()); // Read the requested data in main mem
@@ -212,12 +259,14 @@ uint32_t Cache::Read(uint32_t address) {
 void Cache::Write(uint32_t address, uint32_t data) {
     AddressParts addressParts(address, byteOffsetBits, setIndexBits);
     stats.writes++;
+    uint32_t blockAddr = address >> byteOffsetBits;
 
     CacheLine* line = sets[addressParts.setIndex].Find(addressParts.tag);
 
     // Write hit
     if (line) {
         stats.writeHits++;
+        Account(blockAddr, /*isMiss=*/false, /*installs=*/true);
         if (config.verbose) {
             std::string message = std::format("Writing to cache (start address: 0x{:x}), set: {}, tag: {})",
                 address, addressParts.setIndex, addressParts.tag);
@@ -240,6 +289,8 @@ void Cache::Write(uint32_t address, uint32_t data) {
 
     // Write miss
     stats.writeMisses++;
+    // Under write-allocate the block is brought in; under no-write-allocate it is not
+    Account(blockAddr, /*isMiss=*/true, /*installs=*/config.writeAllocate);
     if (config.writeAllocate) {
         // Write-allocate: pull the line into the cache, then apply the write
         uint32_t line_start = address & ~(config.lineSize - 1);

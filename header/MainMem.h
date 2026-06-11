@@ -31,5 +31,4 @@ class MainMem {
         void Load(const std::string& path);                                 // Load a binary file into main mem starting at address 0
         void FillPattern();                                                 // Seed each byte with (address & 0xFF) - file-free test data
         void SetVerbose(bool on) { verbose = on; }                          // Toggle access logging
-        void Print();                                                       // For debugging
 };

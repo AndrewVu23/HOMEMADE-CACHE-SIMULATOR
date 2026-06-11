@@ -28,8 +28,12 @@ void MemSys::SeedPattern() {
     mainMem.FillPattern();
 }
 
-void MemSys::PrintMainMem() {
-    mainMem.Print();
+uint32_t MemSys::PeekMem(uint32_t address) {
+    // Direct main mem read for debugging -> bypasses the cache entirely, so it
+    // reveals what was (or wasn't) written through / flushed back
+    uint32_t value = 0;
+    mainMem.Read(address, sizeof(uint32_t), reinterpret_cast<uint8_t*>(&value));
+    return value;
 }
 
 bool MemSys::Contains(uint32_t address) const {

@@ -15,7 +15,7 @@ class MemSys {
         void Write(uint32_t address, uint32_t data);
         void LoadMainMem(const std::string& path);
         void SeedPattern();                                  // Fill main mem with value == address & 0xFF
-        void PrintMainMem();
+        uint32_t PeekMem(uint32_t address);                  // Read a 32-bit word straight from main mem (bypasses the cache)
 
         // Profiling pass-throughs to the cache
         bool Contains(uint32_t address) const;               // Is this address currently cached? (no side effects)

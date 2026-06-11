@@ -1,5 +1,6 @@
 CXX      := clang++
-CXXFLAGS := -std=c++20 -Wall -Wextra -Iheader
+# -MMD -MP emit .d files so objects rebuild when an included header changes
+CXXFLAGS := -std=c++20 -Wall -Wextra -Iheader -MMD -MP
 
 # Core simulator sources shared by both the sim binary and the test binary
 CORE_SRC := src/Cache.cpp src/MainMem.cpp src/ReplacementAlgo.cpp src/Workload.cpp src/Processor.cpp
@@ -37,4 +38,7 @@ test: $(TESTS)
 	./$(TESTS)
 
 clean:
-	rm -f $(CORE_OBJ) $(SIM_OBJ) $(SIM) $(TESTS)
+	rm -f $(CORE_OBJ) $(SIM_OBJ) $(SIM) $(TESTS) $(CORE_OBJ:.o=.d) $(SIM_OBJ:.o=.d)
+
+# Pull in auto-generated header dependencies (ignored if absent)
+-include $(CORE_OBJ:.o=.d) $(SIM_OBJ:.o=.d)

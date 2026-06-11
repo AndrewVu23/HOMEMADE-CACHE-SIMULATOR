@@ -69,26 +69,3 @@ void MainMem::Load(const std::string& path) {
     // Load exactly 288 bytes to fit the 2D array below for ease of debugging
     std::cout << std::format("Loaded {} bytes from {} into main memory", size, path) << std::endl;
 }
-
-void MainMem::Print() {
-    // 24 x 12 = 288 bytes -> mapping 2D array onto the first 288 bytes of the 
-    // 4MB 1D array for debugging (mapping the whole 4MB = impossible)
-    const uint32_t ROWS = 24;
-    const uint32_t COLUMNS = 12;
-
-    for (uint32_t row = 0; row < ROWS; row++) {
-        for (uint32_t column = 0; column < COLUMNS; column++) {
-            // Turn 1D -> 2D array
-            // Format raw byte value (not address hence no &) -> hexadecimal
-            std::string value = std ::format("0x{:x}\t", memory.get()->at(row * COLUMNS + column));
-            std::cout << value;
-        }
-        std::cout << std::endl;
-    }
-    std::cout << std::endl;
-    // Long separating line
-    for (uint32_t line = 0; line < 80; line++) {
-        std::cout << "-";
-    }
-    std::cout << std::endl;
-}

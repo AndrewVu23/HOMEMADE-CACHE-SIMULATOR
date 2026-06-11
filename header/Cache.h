@@ -3,6 +3,9 @@
 #include "MainMem.h"
 #include "ReplacementAlgo.h"
 #include <vector>
+#include <list>
+#include <unordered_map>
+#include <unordered_set>
 #include <cstdint>
 #include <iosfwd>
 
@@ -40,6 +43,14 @@ struct CacheStats {
     uint64_t writeMisses = 0;
     uint64_t evictions = 0;                                     // Valid lines overwritten by a fill
     uint64_t dirtyWritebacks = 0;                               // Dirty victims flushed to main mem
+
+    // Category of cache misses
+    // Compulsory = cold miss (when cache line is empty)
+    // Capacity = Working data size > cache size
+    // Conflict = Multiple mem addresses can map to the same location on cache
+    uint64_t compulsoryMisses = 0;
+    uint64_t capacityMisses = 0;
+    uint64_t conflictMisses = 0;
 
     uint64_t accesses() const { return reads + writes; }
     uint64_t hits() const { return readHits + writeHits; }
@@ -116,6 +127,24 @@ class Cache {
         uint32_t byteOffsetBits = 0;                              // log2(lineSize)
         uint32_t setIndexBits = 0;                                // log2(numSets)
         CacheStats stats;                                         // Runtime profiling counters
+
+        // Three-C's miss classification 
+        // Every block address ever requested -> tells compulsory from the rest
+        // std::unordered_set = hash table -> unique values only
+        std::unordered_set<uint32_t> seenBlocks;
+        
+        // A fully-associative LRU cache of the same capacity running in lockstep
+        // If a real miss would also miss here then it is a capacity miss since a
+        // fully-associative cache is impossible to miss by conflict. If the
+        // model still holds the block then it is a conflict miss
+        std::list<uint32_t> shadowOrder;                          // Front = MRU & Back = LRU
+        std::unordered_map<uint32_t, std::list<uint32_t>::iterator> shadowIndex;
+        size_t shadowCapacity = 0;                                // numSets * numWays lines
+
+        // Classify a miss (if isMiss) then advance the shadow model. installs is
+        // true when the access would bring the block into the cache (reads, and
+        // write misses only under write-allocate); it gates the shadow fill.
+        void Account(uint32_t blockAddr, bool isMiss, bool installs);
     public:
         // Store config & compute decode bit widths & build the sets
         void Initialize(const CacheConfig& cfg, MainMem* memory);
